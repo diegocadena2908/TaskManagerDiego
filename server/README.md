@@ -1,8 +1,22 @@
 # Task Manager API
 
-The Express API runs separately from the Vite frontend and currently stores tasks in memory. Restarting the server resets the sample data.
+The Express API uses PostgreSQL to persist tasks. The server creates the `tasks` table automatically at startup; the equivalent SQL is also available in `db/schema.sql`.
 
-## Run the API
+## Configure PostgreSQL
+
+Set `DATABASE_URL` before starting the API. For example:
+
+```bash
+export DATABASE_URL=postgres://postgres:postgres@localhost:5432/task_manager
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:DATABASE_URL = "postgres://postgres:postgres@localhost:5432/task_manager"
+```
+
+Then install dependencies and start the API:
 
 ```bash
 npm install
@@ -17,30 +31,27 @@ npm run server:dev
 
 The API is available at `http://localhost:3001` by default. Set `PORT` to use another port.
 
+## Database schema
+
+The `tasks` table contains:
+
+- `id` — UUID primary key
+- `title` — required string up to 200 characters
+- `description` — text with an empty-string default
+- `completed` — boolean with a `false` default
+- `created_at` — timestamp set by PostgreSQL when the task is created
+
+All values supplied by API requests are passed to PostgreSQL as parameterized query values (`$1`, `$2`, etc.).
+
 ## Endpoints
 
 ### `GET /tasks`
 
-Returns all tasks:
-
-```json
-{
-  "data": [
-    {
-      "id": "uuid",
-      "title": "Review project brief",
-      "description": "Check the project requirements and note any blockers.",
-      "completed": false,
-      "createdAt": "2026-09-18T00:00:00.000Z",
-      "updatedAt": "2026-09-18T00:00:00.000Z"
-    }
-  ]
-}
-```
+Returns all tasks, newest first.
 
 ### `POST /tasks`
 
-Creates a task. `title` is required.
+Creates a task. `title` is required:
 
 ```json
 {
@@ -54,14 +65,6 @@ Returns `201 Created` with the new task in the `data` property.
 ### `PUT /tasks/:id`
 
 Replaces the editable task fields. Send `title`, `description`, and `completed`.
-
-```json
-{
-  "title": "Prepare release notes",
-  "description": "Summarize the completed work and share it.",
-  "completed": true
-}
-```
 
 ### `DELETE /tasks/:id`
 
