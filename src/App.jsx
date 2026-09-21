@@ -1,30 +1,32 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-const initialTasks = [
-  {
-    id: 1,
-    title: 'Review project brief',
-    description: 'Check the project requirements and note any blockers.',
-    completed: false,
-  },
-  {
-    id: 2,
-    title: 'Prepare sprint tasks',
-    description: 'List all tasks for the upcoming sprint and assign owners.',
-    completed: true,
-  },
-  {
-    id: 3,
-    title: 'Book team demo',
-    description: 'Schedule a demo with stakeholders for Friday afternoon.',
-    completed: false,
-  },
-];
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
+async function requestApi(path, options = {}) {
+  const response = await fetch(`${API_URL}${path}`, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+
+  const body = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(body.error?.message || 'No se pudo completar la solicitud.');
+  }
+
+  return body.data;
+}
 
 function App() {
-  const [tasks, setTasks] = useState(initialTasks);
+  const [tasks, setTasks] = useState([]);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   const totalTasks = tasks.length;
   const completedTasks = useMemo(
@@ -32,33 +34,87 @@ function App() {
     [tasks]
   );
 
-  const handleSubmit = (event) => {
-    event.preventDefault();
+  useEffect(() => {
+    let isMounted = true;
 
-    if (!title.trim()) return;
-
-    const newTask = {
-      id: Date.now(),
-      title: title.trim(),
-      description: description.trim(),
-      completed: false,
+    const loadTasks = async () => {
+      try {
+        setError('');
+        const loadedTasks = await requestApi('/tasks');
+        if (isMounted) setTasks(loadedTasks);
+      } catch (requestError) {
+        if (isMounted) {
+          setError(`No se pudieron cargar las tareas: ${requestError.message}`);
+        }
+      } finally {
+        if (isMounted) setLoading(false);
+      }
     };
 
-    setTasks((currentTasks) => [newTask, ...currentTasks]);
-    setTitle('');
-    setDescription('');
+    loadTasks();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    const trimmedTitle = title.trim();
+
+    if (!trimmedTitle) return;
+
+    try {
+      setSaving(true);
+      setError('');
+      const newTask = await requestApi('/tasks', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: trimmedTitle,
+          description: description.trim(),
+        }),
+      });
+
+      setTasks((currentTasks) => [newTask, ...currentTasks]);
+      setTitle('');
+      setDescription('');
+    } catch (requestError) {
+      setError(`No se pudo crear la tarea: ${requestError.message}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const toggleTask = (taskId) => {
-    setTasks((currentTasks) =>
-      currentTasks.map((task) =>
-        task.id === taskId ? { ...task, completed: !task.completed } : task
-      )
-    );
+  const toggleTask = async (task) => {
+    try {
+      setError('');
+      const updatedTask = await requestApi(`/tasks/${task.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          title: task.title,
+          description: task.description || '',
+          completed: !task.completed,
+        }),
+      });
+
+      setTasks((currentTasks) =>
+        currentTasks.map((currentTask) =>
+          currentTask.id === task.id ? updatedTask : currentTask
+        )
+      );
+    } catch (requestError) {
+      setError(`No se pudo actualizar la tarea: ${requestError.message}`);
+    }
   };
 
-  const deleteTask = (taskId) => {
-    setTasks((currentTasks) => currentTasks.filter((task) => task.id !== taskId));
+  const deleteTask = async (taskId) => {
+    try {
+      setError('');
+      await requestApi(`/tasks/${taskId}`, { method: 'DELETE' });
+      setTasks((currentTasks) => currentTasks.filter((task) => task.id !== taskId));
+    } catch (requestError) {
+      setError(`No se pudo eliminar la tarea: ${requestError.message}`);
+    }
   };
 
   return (
@@ -81,6 +137,12 @@ function App() {
           </div>
         </header>
 
+        {error && (
+          <div className="mb-6 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200" role="alert">
+            {error}
+          </div>
+        )}
+
         <main className="grid gap-6 lg:grid-cols-[420px_minmax(0,1fr)]">
           <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-lg shadow-slate-950/20">
             <h2 className="text-xl font-semibold text-white">Add a task</h2>
@@ -96,7 +158,7 @@ function App() {
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
                   placeholder="Finish landing page copy"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-slate-100 placeholder:text-slate-500 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-slate-100 placeholder:text-slate-500 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
                 />
               </div>
 
@@ -110,15 +172,16 @@ function App() {
                   onChange={(event) => setDescription(event.target.value)}
                   placeholder="Write the final content and review it with the team."
                   rows="5"
-                  className="w-full resize-none rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-slate-100 placeholder:text-slate-500 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  className="w-full resize-none rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-slate-100 placeholder:text-slate-500 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
                 />
               </div>
 
               <button
                 type="submit"
-                className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                disabled={saving}
+                className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Add Task
+                {saving ? 'Saving...' : 'Add Task'}
               </button>
             </form>
           </section>
@@ -131,7 +194,11 @@ function App() {
               </span>
             </div>
 
-            {tasks.length === 0 ? (
+            {loading ? (
+              <div className="flex min-h-52 items-center justify-center text-slate-400">
+                Cargando tareas...
+              </div>
+            ) : tasks.length === 0 ? (
               <div className="flex min-h-52 items-center justify-center rounded-2xl border border-dashed border-slate-700 bg-slate-950/40 text-center text-slate-400">
                 <div>
                   <p className="text-lg font-medium text-slate-200">No tasks yet</p>
@@ -153,7 +220,7 @@ function App() {
                       <input
                         type="checkbox"
                         checked={task.completed}
-                        onChange={() => toggleTask(task.id)}
+                        onChange={() => toggleTask(task)}
                         className="mt-1 h-5 w-5 rounded border-slate-600 bg-slate-900 text-indigo-500 focus:ring-indigo-500"
                         aria-label={`Mark ${task.title} complete`}
                       />
