@@ -4,11 +4,11 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 async function requestApi(path, options = {}) {
   const response = await fetch(`${API_URL}${path}`, {
+    ...options,
     headers: {
       'Content-Type': 'application/json',
       ...(options.headers || {}),
     },
-    ...options,
   });
 
   const body = await response.json().catch(() => ({}));
@@ -25,7 +25,9 @@ function App() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [updatingTaskId, setUpdatingTaskId] = useState(null);
+  const [deletingTaskId, setDeletingTaskId] = useState(null);
   const [error, setError] = useState('');
 
   const totalTasks = tasks.length;
@@ -62,10 +64,10 @@ function App() {
     event.preventDefault();
     const trimmedTitle = title.trim();
 
-    if (!trimmedTitle) return;
+    if (!trimmedTitle || creating) return;
 
     try {
-      setSaving(true);
+      setCreating(true);
       setError('');
       const newTask = await requestApi('/tasks', {
         method: 'POST',
@@ -81,12 +83,15 @@ function App() {
     } catch (requestError) {
       setError(`No se pudo crear la tarea: ${requestError.message}`);
     } finally {
-      setSaving(false);
+      setCreating(false);
     }
   };
 
   const toggleTask = async (task) => {
+    if (updatingTaskId || deletingTaskId) return;
+
     try {
+      setUpdatingTaskId(task.id);
       setError('');
       const updatedTask = await requestApi(`/tasks/${task.id}`, {
         method: 'PUT',
@@ -104,16 +109,23 @@ function App() {
       );
     } catch (requestError) {
       setError(`No se pudo actualizar la tarea: ${requestError.message}`);
+    } finally {
+      setUpdatingTaskId(null);
     }
   };
 
   const deleteTask = async (taskId) => {
+    if (updatingTaskId || deletingTaskId) return;
+
     try {
+      setDeletingTaskId(taskId);
       setError('');
       await requestApi(`/tasks/${taskId}`, { method: 'DELETE' });
       setTasks((currentTasks) => currentTasks.filter((task) => task.id !== taskId));
     } catch (requestError) {
       setError(`No se pudo eliminar la tarea: ${requestError.message}`);
+    } finally {
+      setDeletingTaskId(null);
     }
   };
 
@@ -158,7 +170,8 @@ function App() {
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
                   placeholder="Finish landing page copy"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-slate-100 placeholder:text-slate-500 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
+                  disabled={creating}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-slate-100 placeholder:text-slate-500 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/40 disabled:cursor-not-allowed disabled:opacity-60"
                 />
               </div>
 
@@ -172,16 +185,17 @@ function App() {
                   onChange={(event) => setDescription(event.target.value)}
                   placeholder="Write the final content and review it with the team."
                   rows="5"
-                  className="w-full resize-none rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-slate-100 placeholder:text-slate-500 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
+                  disabled={creating}
+                  className="w-full resize-none rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-slate-100 placeholder:text-slate-500 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/40 disabled:cursor-not-allowed disabled:opacity-60"
                 />
               </div>
 
               <button
                 type="submit"
-                disabled={saving}
+                disabled={creating}
                 className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {saving ? 'Saving...' : 'Add Task'}
+                {creating ? 'Saving...' : 'Add Task'}
               </button>
             </form>
           </section>
@@ -195,7 +209,7 @@ function App() {
             </div>
 
             {loading ? (
-              <div className="flex min-h-52 items-center justify-center text-slate-400">
+              <div className="flex min-h-52 items-center justify-center text-slate-400" aria-live="polite">
                 Cargando tareas...
               </div>
             ) : tasks.length === 0 ? (
@@ -207,53 +221,66 @@ function App() {
               </div>
             ) : (
               <ul className="space-y-3">
-                {tasks.map((task) => (
-                  <li
-                    key={task.id}
-                    className={`rounded-2xl border p-4 transition ${
-                      task.completed
-                        ? 'border-emerald-500/30 bg-emerald-500/5'
-                        : 'border-slate-700 bg-slate-950/40'
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="checkbox"
-                        checked={task.completed}
-                        onChange={() => toggleTask(task)}
-                        className="mt-1 h-5 w-5 rounded border-slate-600 bg-slate-900 text-indigo-500 focus:ring-indigo-500"
-                        aria-label={`Mark ${task.title} complete`}
-                      />
+                {tasks.map((task) => {
+                  const isUpdating = updatingTaskId === task.id;
+                  const isDeleting = deletingTaskId === task.id;
+                  const isBusy = Boolean(updatingTaskId || deletingTaskId);
 
-                      <div className="min-w-0 flex-1">
-                        <p
-                          className={`text-base font-medium ${
-                            task.completed ? 'text-slate-400 line-through' : 'text-white'
-                          }`}
-                        >
-                          {task.title}
-                        </p>
-                        {task.description && (
+                  return (
+                    <li
+                      key={task.id}
+                      className={`rounded-2xl border p-4 transition ${
+                        task.completed
+                          ? 'border-emerald-500/30 bg-emerald-500/5'
+                          : 'border-slate-700 bg-slate-950/40'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          checked={task.completed}
+                          onChange={() => toggleTask(task)}
+                          disabled={isBusy}
+                          className="mt-1 h-5 w-5 rounded border-slate-600 bg-slate-900 text-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                          aria-label={`Mark ${task.title} complete`}
+                        />
+
+                        <div className="min-w-0 flex-1">
                           <p
-                            className={`mt-1 text-sm ${
-                              task.completed ? 'text-slate-500' : 'text-slate-300'
+                            className={`text-base font-medium ${
+                              task.completed ? 'text-slate-400 line-through' : 'text-white'
                             }`}
                           >
-                            {task.description}
+                            {task.title}
                           </p>
-                        )}
-                      </div>
+                          {task.description && (
+                            <p
+                              className={`mt-1 text-sm ${
+                                task.completed ? 'text-slate-500' : 'text-slate-300'
+                              }`}
+                            >
+                              {task.description}
+                            </p>
+                          )}
+                          {isUpdating && (
+                            <p className="mt-2 text-xs text-indigo-300" aria-live="polite">
+                              Actualizando...
+                            </p>
+                          )}
+                        </div>
 
-                      <button
-                        type="button"
-                        onClick={() => deleteTask(task.id)}
-                        className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-300 transition hover:bg-red-500/20"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </li>
-                ))}
+                        <button
+                          type="button"
+                          onClick={() => deleteTask(task.id)}
+                          disabled={isBusy}
+                          className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-300 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {isDeleting ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </section>
